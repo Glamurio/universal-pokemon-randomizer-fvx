@@ -362,6 +362,10 @@ public class GameRandomizer {
         if (settings.isRandomizeMoveCategory() && romHandler.hasPhysicalSpecialSplit()) {
             moveDataRandomizer.randomizeMoveCategory();
         }
+
+        if (settings.isRandomizeMovePowers()) {
+            moveDataRandomizer.enforceMovePowerTypeCaps();
+        }
     }
 
     private void maybeApplyMiscTweaks() {

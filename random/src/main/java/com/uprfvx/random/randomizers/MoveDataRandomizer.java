@@ -4,10 +4,12 @@ import com.uprfvx.random.Settings;
 import com.uprfvx.romio.constants.MoveIDs;
 import com.uprfvx.romio.gamedata.Move;
 import com.uprfvx.romio.gamedata.MoveCategory;
+import com.uprfvx.romio.gamedata.StatusType;
 import com.uprfvx.romio.gamedata.Type;
 import com.uprfvx.romio.romhandlers.RomHandler;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 public class MoveDataRandomizer extends Randomizer {
 
@@ -24,12 +26,12 @@ public class MoveDataRandomizer extends Randomizer {
     private static final int MAX_NUKE_PER_TYPE = 1;
 
     // Weighted tier distribution (out of 100)
-    // ~45% Low, ~35% Mid, ~15% High, ~4% Extreme, ~1% Nuke
-    private static final int TIER_LOW_WEIGHT = 45;
-    private static final int TIER_MID_WEIGHT = 35;
-    private static final int TIER_HIGH_WEIGHT = 15;
-    private static final int TIER_EXTREME_WEIGHT = 4;
-    // Nuke gets the remaining 1%
+    // more moves in HIGH to ensure late-game viability.
+    // ~30% Low, ~30% Mid, ~25% High, ~12% Extreme, ~3% Nuke
+    private static final int TIER_LOW_WEIGHT = 30;
+    private static final int TIER_MID_WEIGHT = 30;
+    private static final int TIER_HIGH_WEIGHT = 25;
+    private static final int TIER_EXTREME_WEIGHT = 12;
 
     private enum PowerTier {
         LOW, MID, HIGH, EXTREME, NUKE
@@ -53,13 +55,13 @@ public class MoveDataRandomizer extends Randomizer {
             }
         }
 
-        // Assign each move an initial tier via weighted random roll
+        // Pass 1: Assign each move an initial tier via weighted random roll
         Map<Move, PowerTier> tierAssignments = new LinkedHashMap<>();
         for (Move mv : eligibleMoves) {
             tierAssignments.put(mv, rollInitialTier());
         }
 
-        // Enforce per-type constraints with cascading prerequisite checks
+        // Pass 2: Enforce per-type constraints with cascading prerequisite checks
         //   - HIGH requires that this type already has at least one LOW and one MID move
         //   - EXTREME requires that this type already has at least one HIGH move
         //   - NUKE requires that this type already has at least one EXTREME move
@@ -72,7 +74,7 @@ public class MoveDataRandomizer extends Randomizer {
         // then NUKE (needs EXTREME).
         enforceTierConstraints(tierAssignments);
 
-        // Assign concrete power values within each tier
+        // Pass 3: Assign concrete power values within each tier
         for (Map.Entry<Move, PowerTier> entry : tierAssignments.entrySet()) {
             Move mv = entry.getKey();
             PowerTier tier = entry.getValue();
@@ -88,6 +90,86 @@ public class MoveDataRandomizer extends Randomizer {
         }
 
         changesMade = true;
+    }
+
+    /**
+     * Enforces per-type power caps based on the CURRENT types of moves.
+     * This must be called AFTER move type randomization (if enabled) to ensure
+     * the caps are checked against final types, not original types.
+     *
+     * Walks all damaging moves, groups them by their (possibly randomized) type,
+     * and demotes any that exceed the per-type EXTREME/NUKE caps.
+     * Also enforces the prerequisite chain: NUKE requires EXTREME, EXTREME requires HIGH.
+     */
+    public void enforceMovePowerTypeCaps() {
+        List<Move> moves = romHandler.getMoves();
+
+        // Group eligible damaging moves by type with their current power
+        Map<Type, List<Move>> movesByType = new HashMap<>();
+        for (Move mv : moves) {
+            if (mv != null && mv.internalId != MoveIDs.struggle && mv.power >= 10 && mv.type != null) {
+                movesByType.computeIfAbsent(mv.type, t -> new ArrayList<>()).add(mv);
+            }
+        }
+
+        for (Map.Entry<Type, List<Move>> entry : movesByType.entrySet()) {
+            List<Move> typeMoves = entry.getValue();
+
+            // Count current tier distribution for this type
+            int extremeCount = 0, highCount = 0;
+            for (Move mv : typeMoves) {
+                int effectivePower = (int) (mv.power * mv.hitCount);
+                if (effectivePower > EXTREME_MAX) { /* nuke - counted during enforcement loop */ }
+                else if (effectivePower > HIGH_MAX) extremeCount++;
+                else if (effectivePower > MID_MAX) highCount++;
+            }
+
+            // Shuffle to randomize which moves get demoted
+            List<Move> shuffled = new ArrayList<>(typeMoves);
+            Collections.shuffle(shuffled, random);
+
+            // Enforce NUKE cap first
+            int nukesAllowed = MAX_NUKE_PER_TYPE;
+            // Prerequisite: NUKE needs EXTREME
+            if (extremeCount == 0) nukesAllowed = 0;
+            int nukesSeen = 0;
+            for (Move mv : shuffled) {
+                int ep = (int) (mv.power * mv.hitCount);
+                if (ep > EXTREME_MAX) {
+                    nukesSeen++;
+                    if (nukesSeen > nukesAllowed) {
+                        // Demote to EXTREME
+                        mv.power = rollPowerInTier(PowerTier.EXTREME);
+                        if (mv.hitCount != 1) {
+                            mv.power = (int) (Math.round(mv.power / mv.hitCount / 5) * 5);
+                            if (mv.power == 0) mv.power = 5;
+                        }
+                        extremeCount++;
+                    }
+                }
+            }
+
+            // Enforce EXTREME cap
+            int extremesAllowed = MAX_EXTREME_PER_TYPE;
+            // Prerequisite: EXTREME needs HIGH
+            if (highCount == 0) extremesAllowed = 0;
+            int extremesSeen = 0;
+            for (Move mv : shuffled) {
+                int ep = (int) (mv.power * mv.hitCount);
+                if (ep > HIGH_MAX && ep <= EXTREME_MAX) {
+                    extremesSeen++;
+                    if (extremesSeen > extremesAllowed) {
+                        // Demote to HIGH
+                        mv.power = rollPowerInTier(PowerTier.HIGH);
+                        if (mv.hitCount != 1) {
+                            mv.power = (int) (Math.round(mv.power / mv.hitCount / 5) * 5);
+                            if (mv.power == 0) mv.power = 5;
+                        }
+                        highCount++;
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -125,7 +207,7 @@ public class MoveDataRandomizer extends Randomizer {
         List<Move> shuffled = new ArrayList<>(tierAssignments.keySet());
         Collections.shuffle(shuffled, random);
 
-        // Lock in LOW and MID - these have no prerequisites
+        // Phase 1: Lock in LOW and MID - these have no prerequisites
         for (Move mv : shuffled) {
             PowerTier tier = tierAssignments.get(mv);
             if (tier == PowerTier.LOW || tier == PowerTier.MID) {
@@ -133,7 +215,7 @@ public class MoveDataRandomizer extends Randomizer {
             }
         }
 
-        // Resolve HIGH - requires at least one LOW and one MID for this type
+        // Phase 2: Resolve HIGH - requires at least one LOW and one MID for this type
         for (Move mv : shuffled) {
             PowerTier tier = tierAssignments.get(mv);
             if (tier == PowerTier.HIGH) {
@@ -148,7 +230,7 @@ public class MoveDataRandomizer extends Randomizer {
             }
         }
 
-        // Resolve EXTREME - requires at least one HIGH for this type, capped at MAX_EXTREME_PER_TYPE
+        // Phase 3: Resolve EXTREME - requires at least one HIGH for this type, capped at MAX_EXTREME_PER_TYPE
         for (Move mv : shuffled) {
             PowerTier tier = tierAssignments.get(mv);
             if (tier == PowerTier.EXTREME) {
@@ -169,7 +251,7 @@ public class MoveDataRandomizer extends Randomizer {
             }
         }
 
-        // Resolve NUKE - requires at least one EXTREME for this type, capped at MAX_NUKE_PER_TYPE
+        // Phase 4: Resolve NUKE - requires at least one EXTREME for this type, capped at MAX_NUKE_PER_TYPE
         for (Move mv : shuffled) {
             PowerTier tier = tierAssignments.get(mv);
             if (tier == PowerTier.NUKE) {
@@ -284,49 +366,120 @@ public class MoveDataRandomizer extends Randomizer {
         List<Move> moves = romHandler.getMoves();
         for (Move mv : moves) {
             if (mv != null && mv.internalId != MoveIDs.struggle && mv.hitratio >= 5) {
-                // "Sane" accuracy randomization
-                // Broken into three tiers based on original accuracy
-                // Designed to limit the chances of 100% accurate OHKO moves and
-                // keep a decent base of 100% accurate regular moves.
-
-                if (mv.hitratio <= 50) {
-                    // lowest tier (acc <= 50)
-                    // new accuracy = rand(20...50) inclusive
-                    // with a 10% chance to increase by 50%
+                // Vanilla-faithful accuracy randomization.
+                // In the actual games, roughly:
+                //   ~70% of moves are 100% accuracy
+                //   ~10% are 95%
+                //   ~8% are 85-90%
+                //   ~7% are 70-80%
+                //   ~5% are below 70% (OHKO moves, Zap Cannon, etc.)
+                //
+                // OHKO moves (original acc <= 30) are kept in their own bracket.
+                // Extreme+ power moves (80+ BP) skip generic randomization entirely
+                // and are handled by applyPowerAwareAccuracyAdjustment instead.
+ 
+                if (mv.hitratio <= 30) {
+                    // OHKO / very low accuracy moves — keep them low
+                    // Randomize within 20-50% range
                     mv.hitratio = random.nextInt(7) * 5 + 20;
-                    if (random.nextInt(10) == 0) {
-                        mv.hitratio = (mv.hitratio * 3 / 2) / 5 * 5;
-                    }
-                } else if (mv.hitratio < 90) {
-                    // middle tier (50 < acc < 90)
-                    // count down from 100% to 20% in 5% increments with 20%
-                    // chance to "stop" and use the current accuracy at each
-                    // increment
-                    // gives decent-but-not-100% accuracy most of the time
+                } else if (mv.power >= HIGH_MAX && mv.category != MoveCategory.STATUS) {
+                    // Extreme+ power damaging moves: start at 100%, let the
+                    // power-aware adjustment handle any reductions
                     mv.hitratio = 100;
-                    while (mv.hitratio > 20) {
-                        if (random.nextInt(10) < 2) {
-                            break;
-                        }
-                        mv.hitratio -= 5;
-                    }
                 } else {
-                    // highest tier (90 <= acc <= 100)
-                    // count down from 100% to 20% in 5% increments with 40%
-                    // chance to "stop" and use the current accuracy at each
-                    // increment
-                    // gives high accuracy most of the time
-                    mv.hitratio = 100;
-                    while (mv.hitratio > 20) {
-                        if (random.nextInt(10) < 4) {
-                            break;
-                        }
-                        mv.hitratio -= 5;
+                    // Weighted roll emulating vanilla distribution
+                    int roll = random.nextInt(100);
+                    if (roll < 70) {
+                        mv.hitratio = 100;
+                    } else if (roll < 80) {
+                        mv.hitratio = 95;
+                    } else if (roll < 88) {
+                        // 85-90 range
+                        mv.hitratio = random.nextBoolean() ? 90 : 85;
+                    } else if (roll < 95) {
+                        // 70-80 range
+                        mv.hitratio = random.nextInt(3) * 5 + 70; // 70, 75, or 80
+                    } else {
+                        // Below 70 — rare inaccurate moves
+                        mv.hitratio = random.nextInt(5) * 5 + 45; // 45, 50, 55, 60, or 65
                     }
+                }
+ 
+                // Power-aware accuracy adjustment for Extreme tier and above (80+ BP).
+                // Higher power moves have a chance to lose accuracy, simulating the
+                // classic risk/reward tradeoff of powerful moves.
+                if (mv.power >= HIGH_MAX && mv.category != MoveCategory.STATUS) {
+                    applyPowerAwareAccuracyAdjustment(mv);
                 }
             }
         }
         changesMade = true;
+    }
+    
+    /**
+     * Applies accuracy deductions to high-power moves based on their power and properties.
+     *
+     * For each 10 BP past 80, roll a chance to deduct 5% accuracy.
+     * Base chance per roll: 50%
+     *
+     * Modifiers:
+     *   - Move has a drawback (isChargeMove, isRechargeMove, recoilPercent < 0):
+     *     Skip accuracy adjustment entirely - these moves already pay a cost.
+     *   - Move has a beneficial secondary effect (inflicts status, flinches, absorbs HP):
+     *     Extra roll per deduction step (effectively doubles the chance of each deduction).
+     *
+     * Accuracy floor: 50% - no move is reduced below this regardless of power
+     */
+    private void applyPowerAwareAccuracyAdjustment(Move mv) {
+        int baseChance = 50;
+        int reductionThreshold = 80;
+        int reductionStep = 10;
+        int accuracyReduction = 5;
+        int accuracyFloor = 50;
+
+        // Moves with drawbacks are exempt - they already have a cost
+        if (mv.isChargeMove || mv.isRechargeMove || mv.recoilPercent < 0) {
+            return;
+        }
+
+        int effectivePower = (int) (mv.power * mv.hitCount);
+        if (effectivePower <= reductionThreshold) {
+            return;
+        }
+
+        // Determine if this move has beneficial secondary effects
+        boolean hasBeneficialEffect = false;
+        if (mv.statusType != null && mv.statusType != StatusType.NONE && mv.statusPercentChance > 0) {
+            hasBeneficialEffect = true; // Inflicts a status condition
+        }
+        if (mv.flinchPercentChance > 0) {
+            hasBeneficialEffect = true; // Causes flinching
+        }
+        if (mv.absorbPercent > 0) {
+            hasBeneficialEffect = true; // Drains HP
+        }
+        if (mv.hasBeneficialStatChange()) {
+            hasBeneficialEffect = true; // Raises user stats or lowers target stats
+        }
+
+        // For each 10 BP past 80, roll for a -5 accuracy deduction
+        int stepsOverThreshold = (effectivePower - reductionThreshold) / reductionStep;
+        for (int i = 0; i < stepsOverThreshold; i++) {
+            // Base 50% chance to deduct
+            boolean deduct = random.nextInt(100) < baseChance;
+            if (!deduct && hasBeneficialEffect) {
+                // Extra roll for moves with beneficial effects
+                deduct = random.nextInt(100) < baseChance;
+            }
+            if (deduct) {
+                mv.hitratio -= accuracyReduction;
+            }
+        }
+
+        // Floor accuracy
+        if (mv.hitratio < accuracyFloor) {
+            mv.hitratio = accuracyFloor;
+        }
     }
 
     public void randomizeMoveTypes() {

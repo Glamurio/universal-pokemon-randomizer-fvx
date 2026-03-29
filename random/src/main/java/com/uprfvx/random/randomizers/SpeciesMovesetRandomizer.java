@@ -273,31 +273,28 @@ public class SpeciesMovesetRandomizer extends Randomizer {
 
         double atkSpAtkRatio = evTo.getAttackSpecialAttackRatio();
 
-        // Build the list of move numbers from the pre-evolution (already randomized)
-        Map<Integer, Integer> fromMovesByLevel = new LinkedHashMap<>();
-        for (MoveLearnt ml : fromMoves) {
-            fromMovesByLevel.put(ml.level, ml.move);
-        }
-
-        // Determine which level slots in the evolution can inherit from the pre-evo.
-        // Strategy: for each level slot in the evo, if the pre-evo had a move at that
-        // same level (or the closest lower level), inherit it. New/higher level slots
-        // get randomized fresh.
+        // Inherit moves by position (slot index), not by level.
+        // Evolutions typically have the same number of slots or more than their pre-evo,
+        // with levels shifted upward. We match slot-by-slot: slot 0 of the evo inherits
+        // the move from slot 0 of the pre-evo, slot 1 from slot 1, etc.
+        // Any extra slots the evolution has beyond the pre-evo's count get randomized fresh.
         List<Integer> inheritedMoves = new ArrayList<>();
         Set<Integer> newSlotIndices = new LinkedHashSet<>();
 
-        for (int i = 0; i < toMoves.size(); i++) {
-            int level = toMoves.get(i).level;
+        int inheritableSlots = Math.min(fromMoves.size(), toMoves.size());
 
-            // Try to find a matching move from the pre-evo at this level
-            Integer inheritedMove = fromMovesByLevel.get(level);
-            if (inheritedMove != null && inheritedMove != 0 && !inheritedMoves.contains(inheritedMove)) {
-                toMoves.get(i).move = inheritedMove;
-                inheritedMoves.add(inheritedMove);
-                // Remove from the map so each pre-evo move is only inherited once
-                fromMovesByLevel.put(level, 0);
+        for (int i = 0; i < toMoves.size(); i++) {
+            if (i < inheritableSlots) {
+                int inheritedMove = fromMoves.get(i).move;
+                if (inheritedMove != 0 && !inheritedMoves.contains(inheritedMove)) {
+                    toMoves.get(i).move = inheritedMove;
+                    inheritedMoves.add(inheritedMove);
+                } else {
+                    // Pre-evo slot was empty or duplicate - randomize this slot
+                    newSlotIndices.add(i);
+                }
             } else {
-                // This slot needs a new move
+                // Evolution has more slots than pre-evo - these are new
                 newSlotIndices.add(i);
             }
         }
@@ -434,13 +431,25 @@ public class SpeciesMovesetRandomizer extends Randomizer {
         // Determine weights based on level
         int wLow, wMid, wHigh, wExtreme;
         if (level < 15) {
-            wLow = 70; wMid = 25; wHigh = 5; wExtreme = 0;
+            wLow = 70; wMid = 30; wHigh = 0; wExtreme = 0;
         } else if (level < 30) {
-            wLow = 30; wMid = 45; wHigh = 20; wExtreme = 5;
+            wLow = 30; wMid = 45; wHigh = 25; wExtreme = 0;
         } else if (level < 45) {
-            wLow = 10; wMid = 30; wHigh = 40; wExtreme = 20;
+            wLow = 0; wMid = 35; wHigh = 45; wExtreme = 20;
         } else {
-            wLow = 5; wMid = 15; wHigh = 40; wExtreme = 40;
+            wLow = 0; wMid = 15; wHigh = 40; wExtreme = 45;
+        }
+
+        // Hard cap: prevent extreme moves from appearing before level 30.
+        // This protects small movesets (Beldum, Weedle, Magikarp etc.) where
+        // the highest level slot might only be Lv. 15-20, which would otherwise
+        // get an extreme move simply because it's the "latest" slot.
+        if (level < 30) {
+            wExtreme = 0;
+        }
+        // Similarly, prevent high-tier moves before level 10
+        if (level < 10) {
+            wHigh = 0;
         }
 
         // Build weighted pool
@@ -497,11 +506,14 @@ public class SpeciesMovesetRandomizer extends Randomizer {
 
     /**
      * Splits damaging moves into power tiers based on effective power (power * hitCount).
+     * Excludes variable-damage moves (power = 1) since their actual damage is calculated
+     * dynamically and doesn't reflect their listed power.
      */
     private void categorizeMovesByPower(List<Move> source,
-                                         List<Move> low, List<Move> mid,
-                                         List<Move> high, List<Move> extreme) {
+                                        List<Move> low, List<Move> mid,
+                                        List<Move> high, List<Move> extreme) {
         for (Move mv : source) {
+            if (mv.power <= 1) continue; // Skip fixed/variable damage moves (OHKO, Return, etc.)
             double effectivePower = mv.power * mv.hitCount;
             if (effectivePower <= 40) {
                 low.add(mv);
