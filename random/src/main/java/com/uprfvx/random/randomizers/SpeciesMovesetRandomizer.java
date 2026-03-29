@@ -23,174 +23,496 @@ public class SpeciesMovesetRandomizer extends Randomizer {
         double goodDamagingPercentage =
                 settings.isMovesetsForceGoodDamaging() ? settings.getMovesetsGoodDamagingPercent() / 100.0 : 0;
         boolean evolutionMovesForAll = settings.isEvolutionMovesForAll();
-
+        boolean followEvolutions = settings.isMovesetsFollowEvolutions();
+ 
         // Get current sets
         Map<Integer, List<MoveLearnt>> movesets = romHandler.getMovesLearnt();
-
+ 
         // Build sets of moves
         List<Move> validMoves = new ArrayList<>();
         List<Move> validDamagingMoves = new ArrayList<>();
         Map<Type, List<Move>> validTypeMoves = new HashMap<>();
         Map<Type, List<Move>> validTypeDamagingMoves = new HashMap<>();
         createSetsOfMoves(noBroken, validMoves, validDamagingMoves, validTypeMoves, validTypeDamagingMoves);
-
-        for (Integer pkmnNum : movesets.keySet()) {
-            List<Integer> learnt = new ArrayList<>();
-            List<MoveLearnt> moves = movesets.get(pkmnNum);
-            int lv1AttackingMove = 0;
-            Species pkmn = findSpeciesInPoolWithSpeciesID(rSpecService.getAll(true), pkmnNum);
-            if (pkmn == null) {
-                continue;
-            }
-
-            double atkSpAtkRatio = pkmn.getAttackSpecialAttackRatio();
-
-            // 4 starting moves?
-            if (forceStartingMoves) {
-                int lv1count = 0;
-                for (MoveLearnt ml : moves) {
-                    if (ml.level == 1) {
-                        lv1count++;
-                    }
-                }
-                if (lv1count < forceStartingMoveCount) {
-                    for (int i = 0; i < forceStartingMoveCount - lv1count; i++) {
-                        MoveLearnt fakeLv1 = new MoveLearnt(0, 1);
-                        moves.add(0, fakeLv1);
-                    }
-                }
-            }
-
-            if (evolutionMovesForAll) {
-                if (moves.get(0).level != 0) {
-                    MoveLearnt fakeEvoMove = new MoveLearnt(0, 0);
-                    moves.add(0, fakeEvoMove);
-                }
-            }
-
-            if (pkmn.isActuallyCosmetic()) {
-                for (int i = 0; i < moves.size(); i++) {
-                    moves.get(i).move = movesets.get(pkmn.getBaseForme().getNumber()).get(i).move;
-                }
-                continue;
-            }
-
-            // Find last lv1 move
-            // lv1index ends up as the index of the first non-lv1 move
-            int lv1index = moves.get(0).level == 1 ? 0 : 1; // Evolution move handling (level 0 = evo move)
-            while (lv1index < moves.size() && moves.get(lv1index).level == 1) {
-                lv1index++;
-            }
-
-            // last lv1 move is 1 before lv1index
-            if (lv1index != 0) {
-                lv1index--;
-            }
-
-            // Force a certain amount of good damaging moves depending on the percentage
-            int goodDamagingLeft = (int)Math.round(goodDamagingPercentage * moves.size());
-
-            // Replace moves as needed
-            for (int i = 0; i < moves.size(); i++) {
-                // should this move be forced damaging?
-                boolean attemptDamaging = i == lv1index || goodDamagingLeft > 0;
-
-                // type themed?
-                Type typeOfMove = null;
-                if (typeThemed) {
-                    double picked = random.nextDouble();
-                    if ((pkmn.getPrimaryType(false) == Type.NORMAL && pkmn.getSecondaryType(false) != null) ||
-                            (pkmn.getSecondaryType(false) == Type.NORMAL)) {
-
-                        Type otherType = pkmn.getPrimaryType(false) == Type.NORMAL ? pkmn.getSecondaryType(false) : pkmn.getPrimaryType(false);
-
-                        // Normal/OTHER: 10% normal, 30% other, 60% random
-                        if (picked < 0.1) {
-                            typeOfMove = Type.NORMAL;
-                        } else if (picked < 0.4) {
-                            typeOfMove = otherType;
-                        }
-                        // else random
-                    } else if (pkmn.getSecondaryType(false) != null) {
-                        // Primary/Secondary: 20% primary, 20% secondary, 60% random
-                        if (picked < 0.2) {
-                            typeOfMove = pkmn.getPrimaryType(false);
-                        } else if (picked < 0.4) {
-                            typeOfMove = pkmn.getSecondaryType(false);
-                        }
-                        // else random
-                    } else {
-                        // Primary/None: 40% primary, 60% random
-                        if (picked < 0.4) {
-                            typeOfMove = pkmn.getPrimaryType(false);
-                        }
-                        // else random
-                    }
-                }
-
-                // select a list to pick a move from that has at least one free
-                List<Move> pickList = validMoves;
-                if (attemptDamaging) {
-                    if (typeOfMove != null) {
-                        if (validTypeDamagingMoves.containsKey(typeOfMove)
-                                && checkForUnusedMove(validTypeDamagingMoves.get(typeOfMove), learnt)) {
-                            pickList = validTypeDamagingMoves.get(typeOfMove);
-                        } else if (checkForUnusedMove(validDamagingMoves, learnt)) {
-                            pickList = validDamagingMoves;
-                        }
-                    } else if (checkForUnusedMove(validDamagingMoves, learnt)) {
-                        pickList = validDamagingMoves;
-                    }
-                    MoveCategory forcedCategory = random.nextDouble() < atkSpAtkRatio ? MoveCategory.PHYSICAL : MoveCategory.SPECIAL;
-                    List<Move> filteredList = pickList.stream().filter(mv -> mv.category == forcedCategory).collect(Collectors.toList());
-                    if (!filteredList.isEmpty() && checkForUnusedMove(filteredList, learnt)) {
-                        pickList = filteredList;
-                    }
-                } else if (typeOfMove != null) {
-                    if (validTypeMoves.containsKey(typeOfMove)
-                            && checkForUnusedMove(validTypeMoves.get(typeOfMove), learnt)) {
-                        pickList = validTypeMoves.get(typeOfMove);
-                    }
-                }
-
-                // now pick a move until we get a valid one
-                Move mv = pickList.get(random.nextInt(pickList.size()));
-                while (learnt.contains(mv.number)) {
-                    mv = pickList.get(random.nextInt(pickList.size()));
-                }
-
-                if (i == lv1index) {
-                    lv1AttackingMove = mv.number;
-                } else {
-                    goodDamagingLeft--;
-                }
-                learnt.add(mv.number);
-
-            }
-
-            Collections.shuffle(learnt, random);
-            if (learnt.get(lv1index) != lv1AttackingMove) {
-                for (int i = 0; i < learnt.size(); i++) {
-                    if (learnt.get(i) == lv1AttackingMove) {
-                        learnt.set(i, learnt.get(lv1index));
-                        learnt.set(lv1index, lv1AttackingMove);
-                        break;
-                    }
-                }
-            }
-
-            // write all moves for the pokemon
-            for (int i = 0; i < learnt.size(); i++) {
-                moves.get(i).move = learnt.get(i);
-                if (i == lv1index) {
-                    // just in case, set this to lv1
-                    moves.get(i).level = 1;
-                }
+ 
+        // Build power-tiered move lists for level-scaled picking
+        List<Move> lowPowerMoves = new ArrayList<>();     // power * hitCount <= 40
+        List<Move> midPowerMoves = new ArrayList<>();     // power * hitCount 41-60
+        List<Move> highPowerMoves = new ArrayList<>();    // power * hitCount 61-80
+        List<Move> extremePowerMoves = new ArrayList<>(); // power * hitCount > 80
+        categorizeMovesByPower(validDamagingMoves, lowPowerMoves, midPowerMoves, highPowerMoves, extremePowerMoves);
+ 
+        // Also build type-specific power-tiered lists
+        Map<Type, List<Move>> lowPowerByType = new HashMap<>();
+        Map<Type, List<Move>> midPowerByType = new HashMap<>();
+        Map<Type, List<Move>> highPowerByType = new HashMap<>();
+        Map<Type, List<Move>> extremePowerByType = new HashMap<>();
+        for (Type type : validTypeDamagingMoves.keySet()) {
+            lowPowerByType.put(type, new ArrayList<>());
+            midPowerByType.put(type, new ArrayList<>());
+            highPowerByType.put(type, new ArrayList<>());
+            extremePowerByType.put(type, new ArrayList<>());
+            categorizeMovesByPower(validTypeDamagingMoves.get(type),
+                    lowPowerByType.get(type), midPowerByType.get(type),
+                    highPowerByType.get(type), extremePowerByType.get(type));
+        }
+ 
+        if (followEvolutions) {
+            // Randomize using evolution-aware logic:
+            // Base forms get randomized normally, evolutions inherit and extend
+            copyUpEvolutionsHelper.apply(true, true,
+                    // Base species action
+                    pk -> randomizeSingleSpeciesMoveset(pk, movesets, validMoves, validDamagingMoves,
+                            validTypeMoves, validTypeDamagingMoves,
+                            lowPowerMoves, midPowerMoves, highPowerMoves, extremePowerMoves,
+                            lowPowerByType, midPowerByType, highPowerByType, extremePowerByType,
+                            typeThemed, goodDamagingPercentage, forceStartingMoves, forceStartingMoveCount,
+                            evolutionMovesForAll),
+                    // Evolution action: inherit base form's moves, randomize only new slots
+                    (evFrom, evTo, toMonIsFinalEvo) -> inheritAndExtendMoveset(evFrom, evTo, movesets,
+                            validMoves, validDamagingMoves, validTypeMoves, validTypeDamagingMoves,
+                            lowPowerMoves, midPowerMoves, highPowerMoves, extremePowerMoves,
+                            lowPowerByType, midPowerByType, highPowerByType, extremePowerByType,
+                            typeThemed, goodDamagingPercentage, forceStartingMoves, forceStartingMoveCount,
+                            evolutionMovesForAll));
+        } else {
+            // Randomize each species independently
+            for (Integer pkmnNum : movesets.keySet()) {
+                Species pkmn = findSpeciesInPoolWithSpeciesID(rSpecService.getAll(true), pkmnNum);
+                if (pkmn == null) continue;
+                randomizeSingleSpeciesMoveset(pkmn, movesets, validMoves, validDamagingMoves,
+                        validTypeMoves, validTypeDamagingMoves,
+                        lowPowerMoves, midPowerMoves, highPowerMoves, extremePowerMoves,
+                        lowPowerByType, midPowerByType, highPowerByType, extremePowerByType,
+                        typeThemed, goodDamagingPercentage, forceStartingMoves, forceStartingMoveCount,
+                        evolutionMovesForAll);
             }
         }
+ 
         // Done, save
         romHandler.setMovesLearnt(movesets);
         changesMade = true;
+    }
+    
+    /**
+     * Randomizes a single species' moveset with level-scaled power picking.
+     * Damaging moves picked for later level slots are biased toward higher power tiers.
+     */
+    private void randomizeSingleSpeciesMoveset(Species pkmn, Map<Integer, List<MoveLearnt>> movesets,
+                                                List<Move> validMoves, List<Move> validDamagingMoves,
+                                                Map<Type, List<Move>> validTypeMoves,
+                                                Map<Type, List<Move>> validTypeDamagingMoves,
+                                                List<Move> lowPowerMoves, List<Move> midPowerMoves,
+                                                List<Move> highPowerMoves, List<Move> extremePowerMoves,
+                                                Map<Type, List<Move>> lowPowerByType, Map<Type, List<Move>> midPowerByType,
+                                                Map<Type, List<Move>> highPowerByType, Map<Type, List<Move>> extremePowerByType,
+                                                boolean typeThemed, double goodDamagingPercentage,
+                                                boolean forceStartingMoves, int forceStartingMoveCount,
+                                                boolean evolutionMovesForAll) {
+
+        List<MoveLearnt> moves = movesets.get(pkmn.getNumber());
+        if (moves == null) return;
+
+        // Pad starting moves if needed
+        if (forceStartingMoves) {
+            int lv1count = 0;
+            for (MoveLearnt ml : moves) {
+                if (ml.level == 1) lv1count++;
+            }
+            if (lv1count < forceStartingMoveCount) {
+                for (int i = 0; i < forceStartingMoveCount - lv1count; i++) {
+                    moves.add(0, new MoveLearnt(0, 1));
+                }
+            }
+        }
+
+        if (evolutionMovesForAll) {
+            if (moves.get(0).level != 0) {
+                moves.add(0, new MoveLearnt(0, 0));
+            }
+        }
+
+        if (pkmn.isActuallyCosmetic()) {
+            for (int i = 0; i < moves.size(); i++) {
+                moves.get(i).move = movesets.get(pkmn.getBaseForme().getNumber()).get(i).move;
+            }
+            return;
+        }
+
+        double atkSpAtkRatio = pkmn.getAttackSpecialAttackRatio();
+
+        // Find last lv1 move
+        int lv1index = moves.get(0).level == 1 ? 0 : 1;
+        while (lv1index < moves.size() && moves.get(lv1index).level == 1) {
+            lv1index++;
+        }
+        if (lv1index != 0) lv1index--;
+
+        int goodDamagingLeft = (int) Math.round(goodDamagingPercentage * moves.size());
+
+        List<Integer> learnt = new ArrayList<>();
+        int lv1AttackingMove = 0;
+
+        for (int i = 0; i < moves.size(); i++) {
+            int level = moves.get(i).level;
+            boolean attemptDamaging = i == lv1index || goodDamagingLeft > 0;
+
+            Type typeOfMove = pickTypeForMove(pkmn, typeThemed);
+
+            List<Move> pickList = validMoves;
+            if (attemptDamaging) {
+                // Use level-scaled power picking for damaging moves
+                pickList = getLevelScaledDamagingMoves(level, typeOfMove, atkSpAtkRatio,
+                        validDamagingMoves, validTypeDamagingMoves,
+                        lowPowerMoves, midPowerMoves, highPowerMoves, extremePowerMoves,
+                        lowPowerByType, midPowerByType, highPowerByType, extremePowerByType,
+                        learnt);
+
+                // If level-scaled picking returned nothing usable, fall back
+                if (pickList.isEmpty() || !checkForUnusedMove(pickList, learnt)) {
+                    pickList = validDamagingMoves;
+                }
+
+                // Apply physical/special category filter
+                MoveCategory forcedCategory = random.nextDouble() < atkSpAtkRatio ?
+                        MoveCategory.PHYSICAL : MoveCategory.SPECIAL;
+                List<Move> filteredList = pickList.stream()
+                        .filter(mv -> mv.category == forcedCategory)
+                        .collect(Collectors.toList());
+                if (!filteredList.isEmpty() && checkForUnusedMove(filteredList, learnt)) {
+                    pickList = filteredList;
+                }
+            } else if (typeOfMove != null) {
+                if (validTypeMoves.containsKey(typeOfMove)
+                        && checkForUnusedMove(validTypeMoves.get(typeOfMove), learnt)) {
+                    pickList = validTypeMoves.get(typeOfMove);
+                }
+            }
+
+            Move mv = pickList.get(random.nextInt(pickList.size()));
+            while (learnt.contains(mv.number)) {
+                mv = pickList.get(random.nextInt(pickList.size()));
+            }
+
+            if (i == lv1index) {
+                lv1AttackingMove = mv.number;
+            } else {
+                goodDamagingLeft--;
+            }
+            learnt.add(mv.number);
+        }
+
+        // Shuffle but keep lv1 attacking move in place
+        Collections.shuffle(learnt, random);
+        if (learnt.get(lv1index) != lv1AttackingMove) {
+            for (int i = 0; i < learnt.size(); i++) {
+                if (learnt.get(i) == lv1AttackingMove) {
+                    learnt.set(i, learnt.get(lv1index));
+                    learnt.set(lv1index, lv1AttackingMove);
+                    break;
+                }
+            }
+        }
+
+        // Write moves
+        for (int i = 0; i < learnt.size(); i++) {
+            moves.get(i).move = learnt.get(i);
+            if (i == lv1index) {
+                moves.get(i).level = 1;
+            }
+        }
+    }
+
+    /**
+     * For an evolved species, inherits the pre-evolution's moves for shared level slots,
+     * then randomizes only the new level slots that the evolution adds.
+     * This ensures evolutionary consistency while still giving evolutions new moves.
+     */
+    private void inheritAndExtendMoveset(Species evFrom, Species evTo,
+                                          Map<Integer, List<MoveLearnt>> movesets,
+                                          List<Move> validMoves, List<Move> validDamagingMoves,
+                                          Map<Type, List<Move>> validTypeMoves,
+                                          Map<Type, List<Move>> validTypeDamagingMoves,
+                                          List<Move> lowPowerMoves, List<Move> midPowerMoves,
+                                          List<Move> highPowerMoves, List<Move> extremePowerMoves,
+                                          Map<Type, List<Move>> lowPowerByType, Map<Type, List<Move>> midPowerByType,
+                                          Map<Type, List<Move>> highPowerByType, Map<Type, List<Move>> extremePowerByType,
+                                          boolean typeThemed, double goodDamagingPercentage,
+                                          boolean forceStartingMoves, int forceStartingMoveCount,
+                                          boolean evolutionMovesForAll) {
+
+        List<MoveLearnt> fromMoves = movesets.get(evFrom.getNumber());
+        List<MoveLearnt> toMoves = movesets.get(evTo.getNumber());
+        if (fromMoves == null || toMoves == null) return;
+
+        if (evTo.isActuallyCosmetic()) {
+            for (int i = 0; i < toMoves.size(); i++) {
+                toMoves.get(i).move = movesets.get(evTo.getBaseForme().getNumber()).get(i).move;
+            }
+            return;
+        }
+
+        // Pad starting moves if needed
+        if (forceStartingMoves) {
+            int lv1count = 0;
+            for (MoveLearnt ml : toMoves) {
+                if (ml.level == 1) lv1count++;
+            }
+            if (lv1count < forceStartingMoveCount) {
+                for (int i = 0; i < forceStartingMoveCount - lv1count; i++) {
+                    toMoves.add(0, new MoveLearnt(0, 1));
+                }
+            }
+        }
+
+        if (evolutionMovesForAll) {
+            if (toMoves.get(0).level != 0) {
+                toMoves.add(0, new MoveLearnt(0, 0));
+            }
+        }
+
+        double atkSpAtkRatio = evTo.getAttackSpecialAttackRatio();
+
+        // Build the list of move numbers from the pre-evolution (already randomized)
+        Map<Integer, Integer> fromMovesByLevel = new LinkedHashMap<>();
+        for (MoveLearnt ml : fromMoves) {
+            fromMovesByLevel.put(ml.level, ml.move);
+        }
+
+        // Determine which level slots in the evolution can inherit from the pre-evo.
+        // Strategy: for each level slot in the evo, if the pre-evo had a move at that
+        // same level (or the closest lower level), inherit it. New/higher level slots
+        // get randomized fresh.
+        List<Integer> inheritedMoves = new ArrayList<>();
+        Set<Integer> newSlotIndices = new LinkedHashSet<>();
+
+        for (int i = 0; i < toMoves.size(); i++) {
+            int level = toMoves.get(i).level;
+
+            // Try to find a matching move from the pre-evo at this level
+            Integer inheritedMove = fromMovesByLevel.get(level);
+            if (inheritedMove != null && inheritedMove != 0 && !inheritedMoves.contains(inheritedMove)) {
+                toMoves.get(i).move = inheritedMove;
+                inheritedMoves.add(inheritedMove);
+                // Remove from the map so each pre-evo move is only inherited once
+                fromMovesByLevel.put(level, 0);
+            } else {
+                // This slot needs a new move
+                newSlotIndices.add(i);
+            }
+        }
+
+        // Now randomize the new slots with level-scaled power picking
+        int goodDamagingLeft = (int) Math.round(goodDamagingPercentage * toMoves.size());
+        // Subtract already-inherited good damaging moves from the count
+        List<Move> allMoves = romHandler.getMoves();
+        for (int moveNum : inheritedMoves) {
+            if (moveNum > 0 && moveNum < allMoves.size()) {
+                Move mv = allMoves.get(moveNum);
+                if (mv != null && mv.isGoodDamaging(romHandler.getPerfectAccuracy())) {
+                    goodDamagingLeft--;
+                }
+            }
+        }
+        goodDamagingLeft = Math.max(0, goodDamagingLeft);
+
+        // Find lv1index for the evolution
+        int lv1index = toMoves.get(0).level == 1 ? 0 : 1;
+        while (lv1index < toMoves.size() && toMoves.get(lv1index).level == 1) {
+            lv1index++;
+        }
+        if (lv1index != 0) lv1index--;
+
+        // Check if lv1 already has an attacking move from inheritance
+        boolean lv1HasAttack = false;
+        if (!newSlotIndices.contains(lv1index)) {
+            int lv1Move = toMoves.get(lv1index).move;
+            if (lv1Move > 0 && lv1Move < allMoves.size()) {
+                Move mv = allMoves.get(lv1Move);
+                if (mv != null && mv.power > 0) {
+                    lv1HasAttack = true;
+                }
+            }
+        }
+
+        List<Integer> alreadyUsed = new ArrayList<>(inheritedMoves);
+
+        for (int i : newSlotIndices) {
+            int level = toMoves.get(i).level;
+            boolean attemptDamaging = (!lv1HasAttack && i == lv1index) || goodDamagingLeft > 0;
+
+            Type typeOfMove = pickTypeForMove(evTo, typeThemed);
+
+            List<Move> pickList = validMoves;
+            if (attemptDamaging) {
+                pickList = getLevelScaledDamagingMoves(level, typeOfMove, atkSpAtkRatio,
+                        validDamagingMoves, validTypeDamagingMoves,
+                        lowPowerMoves, midPowerMoves, highPowerMoves, extremePowerMoves,
+                        lowPowerByType, midPowerByType, highPowerByType, extremePowerByType,
+                        alreadyUsed);
+
+                if (pickList.isEmpty() || !checkForUnusedMove(pickList, alreadyUsed)) {
+                    pickList = validDamagingMoves;
+                }
+
+                MoveCategory forcedCategory = random.nextDouble() < atkSpAtkRatio ?
+                        MoveCategory.PHYSICAL : MoveCategory.SPECIAL;
+                List<Move> filteredList = pickList.stream()
+                        .filter(mv -> mv.category == forcedCategory)
+                        .collect(Collectors.toList());
+                if (!filteredList.isEmpty() && checkForUnusedMove(filteredList, alreadyUsed)) {
+                    pickList = filteredList;
+                }
+            } else if (typeOfMove != null) {
+                if (validTypeMoves.containsKey(typeOfMove)
+                        && checkForUnusedMove(validTypeMoves.get(typeOfMove), alreadyUsed)) {
+                    pickList = validTypeMoves.get(typeOfMove);
+                }
+            }
+
+            Move mv = pickList.get(random.nextInt(pickList.size()));
+            while (alreadyUsed.contains(mv.number)) {
+                mv = pickList.get(random.nextInt(pickList.size()));
+            }
+
+            toMoves.get(i).move = mv.number;
+            alreadyUsed.add(mv.number);
+
+            if (attemptDamaging && i != lv1index) {
+                goodDamagingLeft--;
+            }
+            if (i == lv1index) {
+                lv1HasAttack = true;
+            }
+        }
+    }
+
+    /**
+     * Returns a pick list of damaging moves appropriate for the given level.
+     *
+     * Level scaling strategy:
+     *   Lv  1-14: 70% low, 25% mid, 5% high
+     *   Lv 15-29: 30% low, 45% mid, 20% high, 5% extreme
+     *   Lv 30-44: 10% low, 30% mid, 40% high, 20% extreme
+     *   Lv 45+  :  5% low, 15% mid, 40% high, 40% extreme
+     *
+     * The method builds a weighted pool by adding moves from each tier multiple
+     * times proportional to its weight. Falls back gracefully if a tier is empty.
+     */
+    private List<Move> getLevelScaledDamagingMoves(int level, Type typeOfMove, double atkSpAtkRatio,
+                                                    List<Move> validDamagingMoves,
+                                                    Map<Type, List<Move>> validTypeDamagingMoves,
+                                                    List<Move> lowPowerMoves, List<Move> midPowerMoves,
+                                                    List<Move> highPowerMoves, List<Move> extremePowerMoves,
+                                                    Map<Type, List<Move>> lowPowerByType,
+                                                    Map<Type, List<Move>> midPowerByType,
+                                                    Map<Type, List<Move>> highPowerByType,
+                                                    Map<Type, List<Move>> extremePowerByType,
+                                                    List<Integer> alreadyUsed) {
+
+        // Determine which source lists to use (type-specific or general)
+        List<Move> low, mid, high, extreme;
+        if (typeOfMove != null && lowPowerByType.containsKey(typeOfMove)) {
+            low = lowPowerByType.get(typeOfMove);
+            mid = midPowerByType.get(typeOfMove);
+            high = highPowerByType.get(typeOfMove);
+            extreme = extremePowerByType.get(typeOfMove);
+            // If the type-specific lists are too sparse, fall back to general
+            if (low.isEmpty() && mid.isEmpty() && high.isEmpty() && extreme.isEmpty()) {
+                low = lowPowerMoves;
+                mid = midPowerMoves;
+                high = highPowerMoves;
+                extreme = extremePowerMoves;
+            }
+        } else {
+            low = lowPowerMoves;
+            mid = midPowerMoves;
+            high = highPowerMoves;
+            extreme = extremePowerMoves;
+        }
+
+        // Determine weights based on level
+        int wLow, wMid, wHigh, wExtreme;
+        if (level < 15) {
+            wLow = 70; wMid = 25; wHigh = 5; wExtreme = 0;
+        } else if (level < 30) {
+            wLow = 30; wMid = 45; wHigh = 20; wExtreme = 5;
+        } else if (level < 45) {
+            wLow = 10; wMid = 30; wHigh = 40; wExtreme = 20;
+        } else {
+            wLow = 5; wMid = 15; wHigh = 40; wExtreme = 40;
+        }
+
+        // Build weighted pool
+        List<Move> pool = new ArrayList<>();
+        addWeightedMoves(pool, low, wLow);
+        addWeightedMoves(pool, mid, wMid);
+        addWeightedMoves(pool, high, wHigh);
+        addWeightedMoves(pool, extreme, wExtreme);
+
+        if (pool.isEmpty()) {
+            // Absolute fallback
+            pool.addAll(validDamagingMoves);
+        }
+
+        return pool;
+    }
+
+    /**
+     * Adds moves from the source list to the pool, repeated proportional to weight.
+     * Each unique move is added ceil(weight / 20) times to create the desired distribution.
+     */
+    private void addWeightedMoves(List<Move> pool, List<Move> source, int weight) {
+        if (source.isEmpty() || weight <= 0) return;
+        int copies = Math.max(1, (weight + 19) / 20); // ceil(weight/20), at least 1
+        for (int c = 0; c < copies; c++) {
+            pool.addAll(source);
+        }
+    }
+
+    /**
+     * Picks a type for the next move based on the Pokemon's types and the type-themed setting.
+     * Extracted from the original inline logic for reuse.
+     */
+    private Type pickTypeForMove(Species pkmn, boolean typeThemed) {
+        if (!typeThemed) return null;
+
+        double picked = random.nextDouble();
+        if ((pkmn.getPrimaryType(false) == Type.NORMAL && pkmn.getSecondaryType(false) != null) ||
+                (pkmn.getSecondaryType(false) == Type.NORMAL)) {
+
+            Type otherType = pkmn.getPrimaryType(false) == Type.NORMAL ?
+                    pkmn.getSecondaryType(false) : pkmn.getPrimaryType(false);
+
+            if (picked < 0.1) return Type.NORMAL;
+            else if (picked < 0.4) return otherType;
+        } else if (pkmn.getSecondaryType(false) != null) {
+            if (picked < 0.2) return pkmn.getPrimaryType(false);
+            else if (picked < 0.4) return pkmn.getSecondaryType(false);
+        } else {
+            if (picked < 0.4) return pkmn.getPrimaryType(false);
+        }
+        return null;
+    }
+
+    /**
+     * Splits damaging moves into power tiers based on effective power (power * hitCount).
+     */
+    private void categorizeMovesByPower(List<Move> source,
+                                         List<Move> low, List<Move> mid,
+                                         List<Move> high, List<Move> extreme) {
+        for (Move mv : source) {
+            double effectivePower = mv.power * mv.hitCount;
+            if (effectivePower <= 40) {
+                low.add(mv);
+            } else if (effectivePower <= 60) {
+                mid.add(mv);
+            } else if (effectivePower <= 80) {
+                high.add(mv);
+            } else {
+                extreme.add(mv);
+            }
+        }
     }
 
     public void randomizeEggMoves() {
@@ -227,45 +549,14 @@ public class SpeciesMovesetRandomizer extends Randomizer {
             }
 
             // Force a certain amount of good damaging moves depending on the percentage
-            int goodDamagingLeft = (int)Math.round(goodDamagingPercentage * moves.size());
+            int goodDamagingLeft = (int) Math.round(goodDamagingPercentage * moves.size());
 
             // Replace moves as needed
             for (int i = 0; i < moves.size(); i++) {
                 // should this move be forced damaging?
                 boolean attemptDamaging = goodDamagingLeft > 0;
 
-                // type themed?
-                Type typeOfMove = null;
-                if (typeThemed) {
-                    double picked = random.nextDouble();
-                    if ((pkmn.getPrimaryType(false) == Type.NORMAL && pkmn.getSecondaryType(false) != null) ||
-                            (pkmn.getSecondaryType(false) == Type.NORMAL)) {
-
-                        Type otherType = pkmn.getPrimaryType(false) == Type.NORMAL ? pkmn.getSecondaryType(false) : pkmn.getPrimaryType(false);
-
-                        // Normal/OTHER: 10% normal, 30% other, 60% random
-                        if (picked < 0.1) {
-                            typeOfMove = Type.NORMAL;
-                        } else if (picked < 0.4) {
-                            typeOfMove = otherType;
-                        }
-                        // else random
-                    } else if (pkmn.getSecondaryType(false) != null) {
-                        // Primary/Secondary: 20% primary, 20% secondary, 60% random
-                        if (picked < 0.2) {
-                            typeOfMove = pkmn.getPrimaryType(false);
-                        } else if (picked < 0.4) {
-                            typeOfMove = pkmn.getSecondaryType(false);
-                        }
-                        // else random
-                    } else {
-                        // Primary/None: 40% primary, 60% random
-                        if (picked < 0.4) {
-                            typeOfMove = pkmn.getPrimaryType(false);
-                        }
-                        // else random
-                    }
-                }
+                Type typeOfMove = pickTypeForMove(pkmn, typeThemed);
 
                 // select a list to pick a move from that has at least one free
                 List<Move> pickList = validMoves;
@@ -280,8 +571,11 @@ public class SpeciesMovesetRandomizer extends Randomizer {
                     } else if (checkForUnusedMove(validDamagingMoves, learnt)) {
                         pickList = validDamagingMoves;
                     }
-                    MoveCategory forcedCategory = random.nextDouble() < atkSpAtkRatio ? MoveCategory.PHYSICAL : MoveCategory.SPECIAL;
-                    List<Move> filteredList = pickList.stream().filter(mv -> mv.category == forcedCategory).collect(Collectors.toList());
+                    MoveCategory forcedCategory = random.nextDouble() < atkSpAtkRatio ?
+                            MoveCategory.PHYSICAL : MoveCategory.SPECIAL;
+                    List<Move> filteredList = pickList.stream()
+                            .filter(mv -> mv.category == forcedCategory)
+                            .collect(Collectors.toList());
                     if (!filteredList.isEmpty() && checkForUnusedMove(filteredList, learnt)) {
                         pickList = filteredList;
                     }
@@ -326,7 +620,8 @@ public class SpeciesMovesetRandomizer extends Randomizer {
                                    Map<Type, List<Move>> validTypeMoves, Map<Type, List<Move>> validTypeDamagingMoves) {
         List<Move> allMoves = romHandler.getMoves();
         List<Integer> hms = romHandler.getHMMoves();
-        Set<Integer> allBanned = new HashSet<>(noBroken ? romHandler.getGameBreakingMoves() : Collections.emptySet());
+        Set<Integer> allBanned = new HashSet<>(noBroken ?
+                romHandler.getGameBreakingMoves() : Collections.emptySet());
         allBanned.addAll(hms);
         allBanned.addAll(romHandler.getMovesBannedFromLevelup());
         allBanned.addAll(GlobalConstants.zMoves);
@@ -356,18 +651,18 @@ public class SpeciesMovesetRandomizer extends Randomizer {
             }
         }
 
-        Map<Type,Double> avgTypePowers = new TreeMap<>();
+        Map<Type, Double> avgTypePowers = new TreeMap<>();
         double totalAvgPower = 0;
 
-        for (Type type: validTypeMoves.keySet()) {
+        for (Type type : validTypeMoves.keySet()) {
             List<Move> typeMoves = validTypeMoves.get(type);
             int attackingSum = 0;
-            for (Move typeMove: typeMoves) {
+            for (Move typeMove : typeMoves) {
                 if (typeMove.power > 0) {
                     attackingSum += (typeMove.power * typeMove.hitCount);
                 }
             }
-            double avgTypePower = (double)attackingSum / (double)typeMoves.size();
+            double avgTypePower = (double) attackingSum / (double) typeMoves.size();
             avgTypePowers.put(type, avgTypePower);
             totalAvgPower += (avgTypePower);
         }
@@ -378,9 +673,7 @@ public class SpeciesMovesetRandomizer extends Randomizer {
         double minAvg = totalAvgPower * 0.75;
         double maxAvg = totalAvgPower * 1.25;
 
-        // Add extra moves to type lists outside of the range to balance the average power of each type
-
-        for (Type type: avgTypePowers.keySet()) {
+        for (Type type : avgTypePowers.keySet()) {
             double avgPowerForType = avgTypePowers.get(type);
             List<Move> typeMoves = validTypeMoves.get(type);
             List<Move> alreadyPicked = new ArrayList<>();

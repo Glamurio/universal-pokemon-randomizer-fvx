@@ -140,6 +140,7 @@ public class RandomizerGUI {
     private JRadioButton pmsMetronomeOnlyModeRadioButton;
     private JCheckBox pmsGuaranteedLevel1MovesCheckBox;
     private JCheckBox pmsReorderDamagingMovesCheckBox;
+    private JCheckBox pmsFollowEvolutionsCheckBox;
     private JCheckBox pmsNoGameBreakingMovesCheckBox;
     private JCheckBox pmsForceGoodDamagingCheckBox;
     private JSlider pmsGuaranteedLevel1MovesSlider;
@@ -1758,6 +1759,7 @@ public class RandomizerGUI {
         pmsGuaranteedLevel1MovesCheckBox.setSelected(settings.isStartWithGuaranteedMoves());
         pmsGuaranteedLevel1MovesSlider.setValue(settings.getGuaranteedMoveCount());
         pmsReorderDamagingMovesCheckBox.setSelected(settings.isReorderDamagingMoves());
+        pmsFollowEvolutionsCheckBox.setSelected(settings.isMovesetsFollowEvolutions());
         pmsForceGoodDamagingCheckBox.setSelected(settings.isMovesetsForceGoodDamaging());
         pmsForceGoodDamagingSlider.setValue(settings.getMovesetsGoodDamagingPercent());
         pmsNoGameBreakingMovesCheckBox.setSelected(settings.isBlockBrokenMovesetMoves());
@@ -2047,6 +2049,7 @@ public class RandomizerGUI {
         settings.setStartWithGuaranteedMoves(pmsGuaranteedLevel1MovesCheckBox.isSelected() && pmsGuaranteedLevel1MovesCheckBox.isVisible());
         settings.setGuaranteedMoveCount(pmsGuaranteedLevel1MovesSlider.getValue());
         settings.setReorderDamagingMoves(pmsReorderDamagingMovesCheckBox.isSelected());
+        settings.setMovesetsFollowEvolutions(pmsFollowEvolutionsCheckBox.isSelected());
 
         settings.setMovesetsForceGoodDamaging(pmsForceGoodDamagingCheckBox.isSelected());
         settings.setMovesetsGoodDamagingPercent(pmsForceGoodDamagingSlider.getValue());
@@ -2413,7 +2416,7 @@ public class RandomizerGUI {
 
         setInitialButtonState(pmsUnchangedRadioButton, pmsRandomPreferringSameTypeRadioButton, pmsRandomCompletelyRadioButton,
 				pmsMetronomeOnlyModeRadioButton, pmsGuaranteedLevel1MovesCheckBox, pmsReorderDamagingMovesCheckBox,
-				pmsNoGameBreakingMovesCheckBox, pmsForceGoodDamagingCheckBox, pmsEvolutionMovesCheckBox);
+                pmsFollowEvolutionsCheckBox, pmsNoGameBreakingMovesCheckBox, pmsForceGoodDamagingCheckBox, pmsEvolutionMovesCheckBox);
 		pmsGuaranteedLevel1MovesSlider.setVisible(true);
 		pmsGuaranteedLevel1MovesSlider.setEnabled(false);
 		pmsGuaranteedLevel1MovesSlider.setValue(pmsGuaranteedLevel1MovesSlider.getMinimum());
@@ -3387,10 +3390,12 @@ public class RandomizerGUI {
 
         if (pmsMetronomeOnlyModeRadioButton.isSelected() || pmsUnchangedRadioButton.isSelected()) {
             disableAndDeselectButtons(pmsGuaranteedLevel1MovesCheckBox, pmsForceGoodDamagingCheckBox,
-                    pmsReorderDamagingMovesCheckBox, pmsNoGameBreakingMovesCheckBox, pmsEvolutionMovesCheckBox);
+                    pmsReorderDamagingMovesCheckBox, pmsFollowEvolutionsCheckBox, 
+                    pmsNoGameBreakingMovesCheckBox, pmsEvolutionMovesCheckBox);
         } else {
             enableButtons(pmsGuaranteedLevel1MovesCheckBox, pmsForceGoodDamagingCheckBox,
-                    pmsReorderDamagingMovesCheckBox, pmsNoGameBreakingMovesCheckBox, pmsEvolutionMovesCheckBox);
+                    pmsReorderDamagingMovesCheckBox, pmsFollowEvolutionsCheckBox,
+                    pmsNoGameBreakingMovesCheckBox, pmsEvolutionMovesCheckBox);
         }
 
         if (pmsGuaranteedLevel1MovesCheckBox.isSelected()) {

@@ -172,6 +172,7 @@ public class Settings {
     private int movesetsGoodDamagingPercent = 0;
     private boolean blockBrokenMovesetMoves;
     private boolean evolutionMovesForAll;
+    private boolean movesetsFollowEvolutions;
 
     public enum TrainersMod {
         UNCHANGED, RANDOM, DISTRIBUTED, MAINPLAYTHROUGH, TYPE_THEMED,
@@ -703,8 +704,8 @@ public class Settings {
                 typeEffectivenessMod == TypeEffectivenessMod.INVERSE,
                 inverseTypesRandomImmunities, updateTypeEffectiveness));
 
-        // 57 evolutions 2
-        out.write(makeByteSelected(evosForceGrowth, evosNoConvergence));
+        // 57 evolutions 2, movesets follow evolutions
+        out.write(makeByteSelected(evosForceGrowth, evosNoConvergence, movesetsFollowEvolutions));
 
         // 58-60 starter BST limits
         byte highEndByte = (byte)(((startersBSTMinimum >> 8) & 0x0F) + ((startersBSTMaximum >> 4) & 0xF0));
@@ -1075,6 +1076,7 @@ public class Settings {
 
         settings.setEvosForceGrowth(restoreState(data[57], 0));
         settings.setEvosNoConvergence(restoreState(data[57], 1));
+        settings.setMovesetsFollowEvolutions(restoreState(data[57], 2));
 
         settings.setStartersBSTMinimum(((Byte.toUnsignedInt(data[58]) & 0x0F) << 8) + Byte.toUnsignedInt(data[59]));
         settings.setStartersBSTMaximum(((Byte.toUnsignedInt(data[58]) & 0xF0) << 4) + Byte.toUnsignedInt(data[60]));
@@ -1857,6 +1859,14 @@ public class Settings {
 
     public void setReorderDamagingMoves(boolean reorderDamagingMoves) {
         this.reorderDamagingMoves = reorderDamagingMoves;
+    }
+
+    public boolean isMovesetsFollowEvolutions() {
+        return movesetsFollowEvolutions;
+    }
+    
+    public void setMovesetsFollowEvolutions(boolean movesetsFollowEvolutions) {
+        this.movesetsFollowEvolutions = movesetsFollowEvolutions;
     }
 
     public boolean isMovesetsForceGoodDamaging() {
